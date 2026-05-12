@@ -1,3 +1,4 @@
+![Uploading 【免费开源】我开发了一个AI识谱软件，未来的纸质乐谱可以所见即所得了.png…]()
 HOMR GUI (Music Score to MIDI)
 本项目是基于 liebharc/homr 的 GUI 封装与增强版本。
 主要改进：

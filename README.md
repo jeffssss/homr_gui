@@ -1,4 +1,4 @@
-<img width="757" height="1086" alt="HOMR GUI" src="https://github.com/user-attachments/assets/9501b935-5845-4167-8210-9cdf7058f434" />
+<img width="172" height="203" alt="Snipaste_2026-05-12_20-01-11" src="https://github.com/user-attachments/assets/cc08dc83-b856-46c4-8b37-aabc2e652519" />
 
 # HOMR GUI (Music Score to MIDI)
 

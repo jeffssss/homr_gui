@@ -6,6 +6,7 @@ temp_score.png
 temp_score.musicxml
 temp_score.mid
 temp_score.xml
+homr_musicxml_gui_settings.json
 *.zip
 
 # 排除 Python 缓存

@@ -16,6 +16,7 @@ Architecture
    :maxdepth: 1
 
    architecture
+   MusicXML版本与导出兼容性说明
 
 
 API

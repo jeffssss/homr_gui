@@ -32,6 +32,7 @@ extensions = [
     "sphinx.ext.doctest",
     "sphinx.ext.autosectionlabel",
     "sphinx.ext.githubpages",
+    "myst_parser",
 ]
 
 source_suffix = [".rst", ".md"]

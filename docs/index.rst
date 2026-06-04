@@ -9,6 +9,14 @@ Project documentation
 .. include:: ../README.md
    :parser: myst_parser.sphinx_
 
+Architecture
+------------
+
+.. toctree::
+   :maxdepth: 1
+
+   architecture
+
 
 API
 ---

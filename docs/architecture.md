@@ -6,16 +6,16 @@
 
 上游 HOMR 是一个 Optical Music Recognition (OMR) 引擎，目标是把乐谱图片转换成 MusicXML。上游 README 描述的核心流水线是：图像分割和结构分析、五线谱检测与合并、基于 Transformer 的语义符号识别、MusicXML 输出。
 
-这个 fork 在上游引擎外面增加了桌面 GUI 工作流，把“命令行传入图片并输出 MusicXML”包装成“截图到剪贴板、后台识别、输出 MIDI、拖入 DAW”的交互方式。
+这个 fork 在上游引擎外面增加了桌面 GUI 工作流。当前默认入口把“命令行传入图片并输出 MusicXML”包装成“截图到剪贴板、后台识别、保存 MusicXML 文件”的交互方式；旧的 MIDI / DAW 拖拽入口仍保留在 `homr_gui.py` 和 `homr_gui_cpu.py` 中。
 
 ```text
 Windows screenshot clipboard
         |
         v
-PyQt6 HomrGui
+PyQt6 HomrMusicXmlGui
         |
         v
-temp_score.png
+temporary score.png
         |
         v
 WorkerThread
@@ -24,27 +24,22 @@ WorkerThread
 homr.main.process_image(...)
         |
         v
-temp_score.musicxml
+temporary score.musicxml
         |
         v
-music21 converter
-        |
-        v
-temp_score.mid
-        |
-        v
-QDrag / QMimeData URL drag into DAW
+timestamped output folder file
 ```
 
 ## 顶层目录职责
 
 | 路径 | 职责 |
 | --- | --- |
-| `homr_gui.py` | GPU 优先的 PyQt6 GUI 入口。监听剪贴板图片，直接调用 HOMR 引擎，生成 MIDI 并支持拖拽。 |
-| `homr_gui_cpu.py` | CPU 兼容模式 GUI 入口。逻辑几乎与 GPU 入口相同，但强制 `use_gpu_inference=False`，并在处理前下载缺失的 CPU ONNX 权重。 |
-| `启动.bat` | Windows 无控制台启动脚本，使用 `python_embed\pythonw.exe homr_gui.py`。 |
-| `CPU兼容模式.bat` | Windows CPU 安全模式启动脚本，使用 `python_embed\python.exe homr_gui_cpu.py`，保留控制台便于看错误。 |
-| `调试启动.bat` | Windows 调试启动脚本，运行 GPU GUI 入口并暂停控制台。 |
+| `homr_musicxml_gui.py` | 默认 PyQt6 GUI 入口。监听剪贴板图片，直接调用 HOMR 引擎，把生成的 `.musicxml` 移动到用户选择的输出文件夹。 |
+| `homr_gui.py` | 旧 MIDI / DAW 工作流入口。监听剪贴板图片，生成 MIDI 并支持拖拽。 |
+| `homr_gui_cpu.py` | 旧 MIDI / DAW 工作流的 CPU 兼容入口。强制 `use_gpu_inference=False`，并在处理前下载缺失的 CPU ONNX 权重。 |
+| `启动.bat` | Windows 无控制台启动脚本，使用 `python_embed\pythonw.exe homr_musicxml_gui.py`。 |
+| `CPU兼容模式.bat` | Windows CPU 安全模式启动脚本，仍使用 `python_embed\python.exe homr_gui_cpu.py`，保留控制台便于看错误。 |
+| `调试启动.bat` | Windows 调试启动脚本，运行 `homr_musicxml_gui.py` 并暂停控制台。 |
 | `homr/` | 运行时 OMR 引擎。包含图片预处理、分割模型推理、谱表检测、Transformer 识别、MusicXML 生成、ONNX Runtime 封装。 |
 | `training/` | 训练、数据集转换、ONNX 导出和量化代码。运行 GUI 时不走这里。 |
 | `validation/` | 识别结果评估脚本。 |
@@ -56,13 +51,16 @@ QDrag / QMimeData URL drag into DAW
 
 ### 1. GUI 表示层
 
-入口：`homr_gui.py`、`homr_gui_cpu.py`
+默认入口：`homr_musicxml_gui.py`
+
+旧 MIDI / DAW 入口：`homr_gui.py`、`homr_gui_cpu.py`
 
 核心类：
 
 | 类/函数 | 职责 |
 | --- | --- |
-| `HomrGui` | PyQt6 窗口、无边框置顶 UI、状态切换、剪贴板监听、拖拽输出。 |
+| `HomrMusicXmlGui` | PyQt6 窗口、无边框置顶 UI、输出文件夹选择、状态切换、剪贴板监听。 |
+| `HomrGui` | 旧 MIDI / DAW 窗口，负责 MIDI 拖拽输出。 |
 | `WorkerThread` | 后台处理线程，避免图像识别阻塞 UI 线程。 |
 | `CFG` | UI 尺寸、字体、颜色、状态文案集中配置。 |
 
@@ -71,9 +69,9 @@ GUI 的状态机很小：
 | 状态 | 触发条件 | UI 含义 |
 | --- | --- | --- |
 | `idle` | 启动后或初始状态 | 等待用户用 `Win + Shift + S` 截图到剪贴板。 |
-| `processing` | 发现新的剪贴板图片后 | 保存 `temp_score.png`，后台运行 OMR。 |
-| `success` | 生成 `.mid` 文件后 | 主按钮可拖拽当前 MIDI 文件。 |
-| `error` | 识别、XML 生成或 MIDI 转换失败 | 提示用户重新截图。 |
+| `processing` | 发现新的剪贴板图片后 | 保存临时 `score.png`，后台运行 OMR。 |
+| `success` | 生成 `.musicxml` 文件后 | 显示输出文件名。 |
+| `error` | 识别或 XML 生成失败 | 提示用户重新截图。 |
 
 剪贴板处理使用 `QApplication.clipboard().dataChanged`，再通过 `QTimer.singleShot(250, ...)` 做 250ms 延迟，避免同一次截图触发多次处理。`QImage.cacheKey()` 用于跳过重复图片。
 
@@ -82,8 +80,9 @@ GUI 的状态机很小：
 `WorkerThread.run()` 是 GUI 和 HOMR 引擎之间的连接点：
 
 1. 选择推理模式：
-   - `homr_gui.py`：`use_gpu_inference=True`
-   - `homr_gui_cpu.py`：`use_gpu_inference=False`
+   - `homr_musicxml_gui.py`：调用 `is_cuda_available()` 自动选择 GPU 或 CPU。
+   - `homr_gui.py`：旧入口固定请求 GPU。
+   - `homr_gui_cpu.py`：旧入口固定使用 CPU。
 2. 构造 `ProcessingConfig`：
    - `enable_debug=False`
    - `enable_cache=False`
@@ -91,10 +90,10 @@ GUI 的状态机很小：
    - `selected_staff=-1`，处理全部谱表
 3. 构造 `XmlGeneratorArguments(False, None, None)`，即不额外写大页面、节拍器或 tempo。
 4. 直接调用 `homr.main.process_image(self.img_path, config, xml_args)`。
-5. 如果生成了同名 `.musicxml`，用 `music21.converter.parse()` 读取，再 `score.write("midi", fp=out_mid)` 输出 `.mid`。
+5. 默认入口把临时 `.musicxml` 移动到用户选择的输出文件夹，并使用时间戳命名。
 6. 通过 Qt signal 把成功或失败结果发回 UI 线程。
 
-这个实现避免了再启动一个 `poetry run homr ...` 或 `python -m homr.main ...` 子进程，因此模型和 `music21` 可以在当前进程内复用。代码注释里也把这点称为“消除冷启动”。
+这个实现避免了再启动一个 `poetry run homr ...` 或 `python -m homr.main ...` 子进程，因此模型可以在当前进程内复用。旧 MIDI 入口还会在 MusicXML 生成后用 `music21` 转成 MIDI。
 
 ### 3. HOMR 应用服务层
 
@@ -112,7 +111,7 @@ GUI 的状态机很小：
 8. 写 `_teaser.png`，并清理上一次残留的 debug 文件。
 9. 发生异常时删除半成品 `.musicxml`。
 
-CLI 的 `main()` 在调用 `process_image()` 前会执行 `download_weights(use_gpu_inference)`。当前 CPU GUI 也显式调用了 `download_weights(False)`，但 GPU GUI 没有显式调用 `download_weights(True)`，因此 GPU 入口目前更依赖模型文件已经存在。
+CLI 的 `main()` 在调用 `process_image()` 前会执行 `download_weights(use_gpu_inference)`。默认 MusicXML GUI 也会先根据 CUDA 可用性调用 `download_weights(use_gpu_inference)`，减少首次运行缺少模型文件的问题。
 
 ### 4. 图像预处理和分割层
 
@@ -202,16 +201,16 @@ CLI 的 `main()` 在调用 `process_image()` 前会执行 `download_weights(use_
 
 | 功能 | 用户侧表现 | 实现思路 |
 | --- | --- | --- |
-| 图形化入口 | 不需要命令行输入图片路径。 | 用 PyQt6 `QWidget` 做一个小型置顶无边框窗口，主按钮承担状态提示和拖拽入口。 |
-| 截图即输入 | 用户用系统截图工具把乐谱放进剪贴板后自动识别。 | 监听 `QClipboard.dataChanged`，读取 `mimeData.hasImage()`，保存为工作目录下 `temp_score.png`。 |
+| 图形化入口 | 不需要命令行输入图片路径。 | 用 PyQt6 `QWidget` 做一个小型置顶无边框窗口，默认入口提供输出文件夹选择和状态提示。 |
+| 截图即输入 | 用户用系统截图工具把乐谱放进剪贴板后自动识别。 | 监听 `QClipboard.dataChanged`，读取 `mimeData.hasImage()`，保存为临时目录下的 `score.png`。 |
 | 后台识别 | UI 不会在模型推理时卡死。 | `WorkerThread(QThread)` 中调用 `process_image()`，成功/失败通过 signal 回 UI。 |
 | 直接复用 HOMR 引擎 | 不再 shell 出 CLI 子进程。 | 导入 `homr.main.process_image` 和 `ProcessingConfig`，在进程内调用。 |
-| GPU 模式 | 默认入口请求 CUDA 加速。 | `homr_gui.py` 设置 `use_gpu_inference=True`，底层通过 ONNX Runtime provider 尝试 CUDA，失败时部分 session 会降级 CPU。 |
-| CPU 兼容模式 | 为没有 CUDA 的机器提供更稳妥入口。 | `homr_gui_cpu.py` 设置 `use_gpu_inference=False`，并在处理前调用 `download_weights(False)` 下载 CPU 权重。 |
-| MusicXML 转 MIDI | 最终给用户 `.mid`，而不是只给 `.musicxml`。 | HOMR 生成 MusicXML 后，用 `music21.converter.parse()` 读取，再 `score.write("midi", fp=...)` 导出。 |
-| 拖入 DAW | 转换成功后按住主按钮可拖出 MIDI 文件。 | `QDrag` + `QMimeData.setUrls([QUrl.fromLocalFile(self.current_output)])`。 |
+| GPU / CPU 自动选择 | 默认入口优先使用可用的 CUDA，否则使用 CPU。 | `homr_musicxml_gui.py` 调用 `is_cuda_available()`，并把结果传给 `ProcessingConfig.use_gpu_inference`。 |
+| CPU 兼容模式 | 为没有 CUDA 的机器保留旧入口。 | `homr_gui_cpu.py` 设置 `use_gpu_inference=False`，并在处理前调用 `download_weights(False)` 下载 CPU 权重。 |
+| MusicXML 文件输出 | 最终给用户时间戳命名的 `.musicxml` 文件。 | HOMR 生成临时 MusicXML 后，移动到用户选择的输出文件夹。 |
+| 旧 MIDI / DAW 工作流 | 需要 MIDI 拖拽时仍可直接运行旧入口。 | `homr_gui.py` / `homr_gui_cpu.py` 用 `music21.converter.parse()` 转 MIDI，再通过 `QDrag` 拖入 DAW。 |
 | 状态反馈 | 主按钮在等待、处理中、成功、失败时显示不同文案和颜色。 | `CFG["STATES"]` 定义状态样式，`_apply_state()` 更新按钮文本、背景和阴影。 |
-| Windows 启动脚本 | 双击 `.bat` 启动普通、CPU、调试模式。 | 批处理脚本固定调用 `python_embed` 下的 Python 解释器和对应入口文件。 |
+| Windows 启动脚本 | 双击 `.bat` 启动默认 MusicXML GUI、CPU 兼容模式或调试模式。 | `启动.bat` / `调试启动.bat` 调用 `homr_musicxml_gui.py`；`CPU兼容模式.bat` 暂时调用旧 CPU MIDI 入口。 |
 | ONNX Runtime 稳定性改造 | 减少 CUDA provider 初始化失败导致的直接崩溃。 | 把上游分散在各模型里的 ORT 初始化逻辑抽到 `homr/onnxruntime_utils.py`，各模型统一使用。 |
 
 ## 相对上游 HOMR 的主要改动点
@@ -222,6 +221,7 @@ CLI 的 `main()` 在调用 `process_image()` 前会执行 `download_weights(use_
 
 - `homr_gui.py`
 - `homr_gui_cpu.py`
+- `homr_musicxml_gui.py`
 - `启动.bat`
 - `CPU兼容模式.bat`
 - `调试启动.bat`
@@ -231,7 +231,7 @@ CLI 的 `main()` 在调用 `process_image()` 前会执行 `download_weights(use_
 同时在依赖中加入：
 
 - `pyqt6`：桌面 GUI。
-- `music21`：MusicXML 到 MIDI 的转换。
+- `music21`：旧 MIDI / DAW 工作流中的 MusicXML 到 MIDI 转换。
 
 ### ONNX Runtime provider 抽象
 
@@ -261,19 +261,21 @@ https://github.com/liebharc/homr/releases/download/onnx_checkpoints/
 
 ## 重要开发注意事项
 
-1. `homr_gui.py` 和 `homr_gui_cpu.py` 大量重复。现在二者的主要差别是 `use_gpu_inference` 和 CPU 模式的 `download_weights(False)`。如果继续扩展 GUI，建议先抽公共模块，避免双份改动漂移。
-2. GPU GUI 当前没有像 CLI 和 CPU GUI 那样显式调用 `download_weights(True)`。如果模型文件不存在，GPU 首次运行可能直接失败。
-3. GUI 固定使用工作目录下的 `temp_score.png`、`temp_score.musicxml`、`temp_score.mid`。连续多次截图会覆盖上一轮输出；如果需要保留历史结果，应改成带时间戳或内容 hash 的文件名。
-4. GUI 配置里 `enable_cache=False`、`enable_debug=False`，因此不会复用 `.npy` 分割缓存，也不会保留中间 debug 图。排查识别质量问题时可能需要给 GUI 加开关。
-5. `docs/source/libs.rst` 仍指向 `libs` 包，而当前仓库没有这个包。Sphinx API 文档配置需要后续清理或改成 `homr`。
-6. `training/` 和 `validation/` 是模型研发和评估路径，GUI 日常运行不依赖它们。修改运行时行为时优先看 `homr/` 和 GUI 入口。
+1. 默认入口已经切换到 `homr_musicxml_gui.py`；`homr_gui.py` 和 `homr_gui_cpu.py` 仍是旧 MIDI / DAW 工作流。
+2. `homr_gui.py` 和 `homr_gui_cpu.py` 大量重复。现在二者的主要差别是 `use_gpu_inference` 和 CPU 模式的 `download_weights(False)`。如果继续扩展旧 GUI，建议先抽公共模块，避免双份改动漂移。
+3. `CPU兼容模式.bat` 目前仍启动旧 CPU MIDI 入口。若需要 MusicXML GUI 的强制 CPU 模式，应先给 `homr_musicxml_gui.py` 增加参数，再切换该脚本。
+4. 旧 MIDI GUI 固定使用工作目录下的 `temp_score.png`、`temp_score.musicxml`、`temp_score.mid`。连续多次截图会覆盖上一轮输出；默认 MusicXML GUI 已使用临时目录和时间戳输出文件。
+5. GUI 配置里 `enable_cache=False`、`enable_debug=False`，因此不会复用 `.npy` 分割缓存，也不会保留中间 debug 图。排查识别质量问题时可能需要给 GUI 加开关。
+6. `docs/source/libs.rst` 仍指向 `libs` 包，而当前仓库没有这个包。Sphinx API 文档配置需要后续清理或改成 `homr`。
+7. `training/` 和 `validation/` 是模型研发和评估路径，GUI 日常运行不依赖它们。修改运行时行为时优先看 `homr/` 和 GUI 入口。
 
 ## 接手修改时的推荐阅读顺序
 
-1. `homr_gui.py` 或 `homr_gui_cpu.py`：理解桌面工作流。
-2. `homr/main.py::process_image()`：理解 HOMR 引擎的主调用链。
-3. `homr/segmentation/inference_segnet.py`：理解第一阶段 mask 预测。
-4. `homr/staff_detection.py`、`homr/note_detection.py`、`homr/brace_dot_detection.py`：理解几何结构恢复。
-5. `homr/staff_parsing.py`、`homr/transformer/staff2score.py`：理解每条谱表如何送入 Transformer。
-6. `homr/music_xml_generator.py`：理解输出格式和后续 MIDI 转换的输入。
-7. `homr/onnxruntime_utils.py`：理解 CPU/GPU provider、降级和 OCR 参数。
+1. `homr_musicxml_gui.py`：理解当前默认 MusicXML 桌面工作流。
+2. `homr_gui.py` 或 `homr_gui_cpu.py`：理解旧 MIDI / DAW 桌面工作流。
+3. `homr/main.py::process_image()`：理解 HOMR 引擎的主调用链。
+4. `homr/segmentation/inference_segnet.py`：理解第一阶段 mask 预测。
+5. `homr/staff_detection.py`、`homr/note_detection.py`、`homr/brace_dot_detection.py`：理解几何结构恢复。
+6. `homr/staff_parsing.py`、`homr/transformer/staff2score.py`：理解每条谱表如何送入 Transformer。
+7. `homr/music_xml_generator.py`：理解 MusicXML 输出格式。
+8. `homr/onnxruntime_utils.py`：理解 CPU/GPU provider、降级和 OCR 参数。
